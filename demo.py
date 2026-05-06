@@ -66,7 +66,28 @@ IMG_STD = [0.28674, 0.27776, 0.27995]
 
 CKPT_PATH = "checkpoints/videoattentiontarget.pt"
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def get_device():
+	if not torch.cuda.is_available():
+		return torch.device("cpu")
+
+	try:
+		props = torch.cuda.get_device_properties(0)
+		arch = f"sm_{props.major}{props.minor}"
+		supported = arch in torch.cuda.get_arch_list()
+	except Exception:
+		supported = True
+
+	if supported:
+		return torch.device("cuda")
+	else:
+		print(colored(
+			f"CUDA device NVIDIA {props.name} (compute {arch}) is unsupported by this PyTorch build. Falling back to CPU.",
+			"red",
+		))
+		return torch.device("cpu")
+
+DEVICE = get_device()
 print(colored(f"Using device: {DEVICE}", TERM_COLOR))
 
 # ========================= UTILITY FUNCTIONS =========================== #
@@ -91,7 +112,11 @@ def load_tracker():
 def load_head_detection_model(device):
 	# Load and return the pre-trained head detection model
 	ckpt_path = "./weights/yolov5m_crowdhuman.pt"
-	model = torch.hub.load("ultralytics/yolov5", "custom", path=ckpt_path, verbose=False)
+	if isinstance(device, torch.device):
+		device_str = "cpu" if device.type == "cpu" else str(device.index or 0)
+	else:
+		device_str = str(device)
+	model = torch.hub.load("ultralytics/yolov5", "custom", path=ckpt_path, verbose=False, device=device_str)
 	model.conf = 0.25  # NMS confidence threshold
 	model.iou = 0.45  # NMS IoU threshold
 	model.classes = [1]  # filter by class, i.e. = [1] for heads
@@ -105,8 +130,36 @@ def detect_heads(image, model):
 	Detect heads in the image using the provided model.
 	Returns a numpy array containing the detected head bboxes and their confidence scores.
 	"""
-	detections = model(image, size=640).pred[0].cpu().numpy()[:, :-1] # filter out the class column
-	return detections
+	# Convert BGR OpenCV image to RGB and keep HWC numpy format for YOLO AutoShape
+	image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+	image = np.ascontiguousarray(image)
+
+	results = model(image, size=640)
+	detections = results.xyxy[0]
+	if detections is None or detections.shape[0] == 0:
+		return np.zeros((0, 5), dtype=np.float32)
+
+	return detections[:, :5].cpu().numpy()
+
+
+def get_ffmpeg_path():
+	# Prefer a working ffmpeg binary outside the current conda env if needed.
+	candidates = [
+		shutil.which("ffmpeg"),
+		"/home/linuxbrew/.linuxbrew/bin/ffmpeg",
+		"/usr/bin/ffmpeg",
+	]
+	for candidate in candidates:
+		if not candidate:
+			continue
+		if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+			try:
+				sp.run([candidate, "-version"], stdout=sp.DEVNULL, stderr=sp.DEVNULL, check=True)
+				return candidate
+			except Exception:
+				continue
+	raise RuntimeError("No working ffmpeg binary found. Install ffmpeg or set FFMPEG_PATH.")
+
 
 def load_sharingan_model(ckpt_path, device):
 	# Build model
@@ -151,6 +204,8 @@ def predict_gaze(image, sharingan, head_detector, tracker=None):
 			cls_ = np.array([0.])
 			detection = np.concatenate([bbox, conf[None], cls_])
 			detections.append(detection)
+	if len(detections) == 0:
+		return torch.tensor([]), torch.tensor([]), torch.tensor([]), torch.tensor([]), torch.tensor([])
 	detections = np.stack(detections)
 	num_heads = len(detections)
 	
@@ -384,8 +439,21 @@ def main():
 	frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 	
 	# Initialize ffmpeg writer
-	command = f"ffmpeg -loglevel error -y -s {img_w}x{img_h} -pixel_format rgb24 -f rawvideo -r {fps} -i pipe: -vcodec libx264 -pix_fmt yuv420p -crf 24 {output_file}"
-	command = shlex.split(command)
+	ffmpeg_bin = get_ffmpeg_path()
+	command = [
+		ffmpeg_bin,
+		"-loglevel", "error",
+		"-y",
+		"-s", f"{img_w}x{img_h}",
+		"-pixel_format", "rgb24",
+		"-f", "rawvideo",
+		"-r", str(fps),
+		"-i", "pipe:",
+		"-vcodec", "libx264",
+		"-pix_fmt", "yuv420p",
+		"-crf", "24",
+		output_file,
+	]
 	process = sp.Popen(command, stdin=sp.PIPE)
 	
 	# Iterate over frames and process
