@@ -10,9 +10,9 @@ import datetime as dt
 import warnings
 from abc import ABC, abstractmethod
 
-import pytorch_lightning as pl
+import lightning.pytorch as pl
 import torch
-from pytorch_lightning.callbacks import (
+from lightning.pytorch.callbacks import (
     LearningRateMonitor,
     ModelCheckpoint,
     StochasticWeightAveraging,

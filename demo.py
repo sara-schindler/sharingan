@@ -240,7 +240,7 @@ def load_sharingan_model(ckpt_path, device):
 	)
 
 	# Load checkpoint
-	checkpoint = torch.load(ckpt_path, map_location="cpu")
+	checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
 	checkpoint = {name.replace("model.", ""): value for name, value in checkpoint["state_dict"].items()}
 	sharingan.load_state_dict(checkpoint, strict=True)
 	sharingan.eval()

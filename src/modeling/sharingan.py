@@ -19,7 +19,7 @@ import pandas as pd
 warnings.filterwarnings("ignore", message=r"The feature ([^\s]+) is currently marked under review")
 
 import einops
-import pytorch_lightning as pl
+import lightning.pytorch as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -105,7 +105,11 @@ class SharinganModule(pl.LightningModule):
 
     def _init_weights(self):
         if self.model_weights is not None:
-            model_ckpt = torch.load(self.model_weights, map_location="cpu")
+            model_ckpt = torch.load(
+                self.model_weights,
+                map_location="cpu",
+                weights_only=False,
+            )
             model_weights = OrderedDict(
                 [
                     (name.replace("model.", ""), value)
@@ -122,7 +126,11 @@ class SharinganModule(pl.LightningModule):
             del model_ckpt
         else:
             # Load weights for Multi ViT
-            multivit_ckpt = torch.load(self.multivit_weights, map_location="cpu")
+            multivit_ckpt = torch.load(
+                self.multivit_weights,
+                map_location="cpu",
+                weights_only=False,
+            )
             image_tokenizer_weights = OrderedDict(
                 [
                     (name.replace("input_adapters.rgb.", ""), value)
@@ -156,7 +164,11 @@ class SharinganModule(pl.LightningModule):
             )
 
             # Load Gaze Encoder Gaze360 Pre-trained Weights
-            gaze360_ckpt = torch.load(self.gaze360_weights, map_location="cpu")
+            gaze360_ckpt = torch.load(
+                self.gaze360_weights,
+                map_location="cpu",
+                weights_only=False,
+            )
             gaze360_weights = OrderedDict(
                 [
                     (name.replace("base_head.", ""), value)

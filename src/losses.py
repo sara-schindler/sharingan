@@ -40,7 +40,7 @@ def compute_dist_loss(gp_pred, gp_gt, io_gt):
     return dist_loss
 
 def compute_heatmap_loss(hm_pred, hm_gt, io_gt):
-    heatmap_loss = F.mse_loss(hm_pred, hm_gt, reduce=False).mean([1, 2])
+    heatmap_loss = F.mse_loss(hm_pred, hm_gt, reduction="none").mean([1, 2])
     heatmap_loss = torch.mul(heatmap_loss, io_gt)
     heatmap_loss = torch.sum(heatmap_loss) / torch.sum(io_gt)
     return heatmap_loss

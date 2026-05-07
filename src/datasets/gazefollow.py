@@ -11,7 +11,7 @@ from typing import Dict, Union
 
 import numpy as np
 import pandas as pd
-import pytorch_lightning as pl
+import lightning.pytorch as pl
 import torch
 import torch.nn.functional as F
 

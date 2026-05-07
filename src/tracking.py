@@ -12,7 +12,7 @@ import os
 import shutil
 import omegaconf
 import wandb
-from pytorch_lightning.loggers.wandb import WandbLogger
+from lightning.pytorch.loggers import WandbLogger
 
 from termcolor import colored
 
