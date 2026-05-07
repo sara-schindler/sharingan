@@ -77,17 +77,23 @@ def get_device():
 		return torch.device("cpu")
 
 	try:
-		props = torch.cuda.get_device_properties(0)
-		arch = f"sm_{props.major}{props.minor}"
-		supported = arch in torch.cuda.get_arch_list()
-	except Exception:
-		supported = True
-
-	if supported:
+		device = torch.device("cuda")
+		# Probe with a real CUDA op instead of checking arch tokens only.
+		_ = torch.zeros(1, device=device)
+		torch.cuda.synchronize()
 		return torch.device("cuda")
-	else:
+	except Exception as exc:
+		name = "unknown"
+		arch = "unknown"
+		try:
+			props = torch.cuda.get_device_properties(0)
+			name = props.name
+			arch = f"sm_{props.major}{props.minor}"
+		except Exception:
+			pass
+
 		print(colored(
-			f"CUDA device NVIDIA {props.name} (compute {arch}) is unsupported by this PyTorch build. Falling back to CPU.",
+			f"CUDA device {name} (compute {arch}) failed a runtime probe with this PyTorch build ({exc}). Falling back to CPU.",
 			"red",
 		))
 		return torch.device("cpu")
