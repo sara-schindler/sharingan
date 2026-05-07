@@ -27,6 +27,16 @@ conda env create -f environment.yaml
 conda activate sharingan
 ```
 
+The environment file currently pins a CUDA 12.8 PyTorch stack (`torch==2.11.0+cu128`, `torchvision==0.26.0+cu128`).
+This setup supports both older GPUs such as RTX 2070 SUPER and newer RTX cards, provided your NVIDIA driver is up to date.
+
+If you already created the environment before these dependency updates, rebuild it:
+```shell
+conda env remove -n sharingan
+conda env create -f environment.yaml
+conda activate sharingan
+```
+
 ### 2. Organize the data artifacts
 Sharingan requires more than 1 person's head bounding box for training multi-person models. GazeFollow however, mostly annotates a single person per image. As explained in the paper, we ran an off-the-shelf head detector to find other head boxes when available.
 
