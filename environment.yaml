@@ -25,6 +25,6 @@ dependencies:
       - torchmetrics==1.2.1
       - torchvision==0.16.1
       - transformers==4.35.2
-      - wandb==0.16.1 
+      - ultralytics>=8.0.0
+      - wandb==0.16.1
       - boxmot==10.0.46
-      
