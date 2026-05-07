@@ -124,13 +124,11 @@ def resolve_gaze_targets(pids, head_bboxes, gaze_points, inouts, img_w, img_h, i
 	for i, pid in enumerate(pids):
 		row = {
 			"looker_pid": int(pid),
-			"inout": float(io[i]) if io.size > 0 else 0.0,
 			"target_pid": "",
-			"gaze_in_bbox": 0,
 		}
 
 		# Skip target assignment when gaze data missing or inout below threshold
-		if gp.size == 0 or row["inout"] < io_thr:
+		if gp.size == 0 or (float(io[i]) if io.size > 0 else 0.0) < io_thr:
 			rows.append(row)
 			continue
 
@@ -149,7 +147,6 @@ def resolve_gaze_targets(pids, head_bboxes, gaze_points, inouts, img_w, img_h, i
 		if candidates:
 			candidates.sort(key=lambda c: c[1])
 			row["target_pid"] = candidates[0][0]
-			row["gaze_in_bbox"] = 1
 
 		rows.append(row)
 	return rows
