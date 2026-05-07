@@ -549,9 +549,7 @@ def main():
 
 	# Open CSV for gaze-target output
 	os.makedirs(args.output_dir, exist_ok=True)
-	csv_fields = ["frame", "timestamp_sec", "looker_pid", "target_pid", "inout",
-				  "gaze_in_bbox", "gaze_x", "gaze_y",
-				  "head_xmin", "head_ymin", "head_xmax", "head_ymax"]
+	csv_fields = ["frame", "timestamp_sec", "looker_pid", "target_pid"]
 	csv_fh = open(csv_file, "w", newline="")
 	csv_writer = csv.DictWriter(csv_fh, fieldnames=csv_fields)
 	csv_writer.writeheader()
