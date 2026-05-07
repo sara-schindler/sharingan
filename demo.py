@@ -118,12 +118,6 @@ def resolve_gaze_targets(pids, head_bboxes, gaze_points, inouts, img_w, img_h, i
 		row = {
 			"looker_pid": int(pid),
 			"inout": float(io[i]) if io.size > 0 else 0.0,
-			"gaze_x": float(gp[i, 0]) if gp.size > 0 else "",
-			"gaze_y": float(gp[i, 1]) if gp.size > 0 else "",
-			"head_xmin": float(hb[i, 0]),
-			"head_ymin": float(hb[i, 1]),
-			"head_xmax": float(hb[i, 2]),
-			"head_ymax": float(hb[i, 3]),
 			"target_pid": "",
 			"gaze_in_bbox": 0,
 		}
