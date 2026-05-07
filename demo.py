@@ -8,6 +8,7 @@
 
 import os
 import sys
+import csv
 import shlex
 import shutil
 import argparse
@@ -50,14 +51,17 @@ parser.add_argument("--show-gaze-vec", action='store_true', help="Whether to dra
 parser.add_argument('--no-show-gaze-vec', dest='show_gaze_vec', action='store_false')
 parser.set_defaults(show_gaze_vec=False)
 
+parser.add_argument("--write-video", action='store_true', default=False, help="Also write an annotated output video (default: CSV only).")
+parser.add_argument("--io-thr", type=float, default=0.5, help="In/out score threshold for gaze target assignment.")
+
 args = parser.parse_args()
 
 
 # =============================== GLOBALS =============================== #
 TERM_COLOR = "cyan"
-COLOR_NAMES = ["mediumvioletred", "green", "dodgerblue", "crimson", "goldenrod", "DarkSlateGray", 
+COLOR_NAMES = ["mediumvioletred", "green", "dodgerblue", "crimson", "goldenrod", "DarkSlateGray",
 			   "saddlebrown", "purple", "teal"]
-COLORS = [(199, 21, 133), (0, 128, 0), (30, 144, 255), (220, 20, 60), (218, 165, 32), 
+COLORS = [(199, 21, 133), (0, 128, 0), (30, 144, 255), (220, 20, 60), (218, 165, 32),
 		  (47, 79, 79), (139, 69, 19), (128, 0, 128), (0, 128, 128)]
 
 DET_THR = 0.4 # head detection threshold
@@ -91,6 +95,65 @@ DEVICE = get_device()
 print(colored(f"Using device: {DEVICE}", TERM_COLOR))
 
 # ========================= UTILITY FUNCTIONS =========================== #
+def resolve_gaze_targets(pids, head_bboxes, gaze_points, inouts, img_w, img_h, io_thr=0.5):
+	"""
+	For each detected person, determine which other participant (if any) they
+	are looking at by checking whether the gaze point falls inside another
+	person's head bbox. Returns a list of dicts (one per detected person).
+	"""
+	rows = []
+	if len(pids) == 0:
+		return rows
+
+	# Convert tensors to numpy
+	hb = head_bboxes.numpy() if isinstance(head_bboxes, torch.Tensor) else np.array(head_bboxes)
+	gp = gaze_points.numpy() if isinstance(gaze_points, torch.Tensor) else np.array(gaze_points)
+	io = inouts.numpy() if isinstance(inouts, torch.Tensor) else np.array(inouts)
+
+	# Gaze points are normalised 0..1 → pixel coords
+	if gp.size > 0 and gp.max() <= 1.0:
+		gp = gp * np.array([img_w, img_h])
+
+	for i, pid in enumerate(pids):
+		row = {
+			"looker_pid": int(pid),
+			"inout": float(io[i]) if io.size > 0 else 0.0,
+			"gaze_x": float(gp[i, 0]) if gp.size > 0 else "",
+			"gaze_y": float(gp[i, 1]) if gp.size > 0 else "",
+			"head_xmin": float(hb[i, 0]),
+			"head_ymin": float(hb[i, 1]),
+			"head_xmax": float(hb[i, 2]),
+			"head_ymax": float(hb[i, 3]),
+			"target_pid": "",
+			"gaze_in_bbox": 0,
+		}
+
+		# Skip target assignment when gaze data missing or inout below threshold
+		if gp.size == 0 or row["inout"] < io_thr:
+			rows.append(row)
+			continue
+
+		gx, gy = gp[i]
+		candidates = []
+		for j, other_pid in enumerate(pids):
+			if other_pid == pid:
+				continue
+			xmin, ymin, xmax, ymax = hb[j]
+			if xmin <= gx <= xmax and ymin <= gy <= ymax:
+				cx = (xmin + xmax) / 2
+				cy = (ymin + ymax) / 2
+				dist = (gx - cx) ** 2 + (gy - cy) ** 2
+				candidates.append((int(other_pid), dist))
+
+		if candidates:
+			candidates.sort(key=lambda c: c[1])
+			row["target_pid"] = candidates[0][0]
+			row["gaze_in_bbox"] = 1
+
+		rows.append(row)
+	return rows
+
+
 def expand_bbox(bbox, img_w, img_h, k=0.1):
 	w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
 	bbox[0] = max(0, bbox[0] - k * w)
@@ -194,7 +257,7 @@ def predict_gaze(image, sharingan, head_detector, tracker=None):
 	# 1. Convert image
 	image_np = np.array(image)
 	img_h, img_w, img_c = image_np.shape
- 
+
 	raw_detections = detect_heads(image_np, head_detector)
 	detections = []
 	for k, raw_detection in enumerate(raw_detections):
@@ -208,15 +271,15 @@ def predict_gaze(image, sharingan, head_detector, tracker=None):
 		return torch.tensor([]), torch.tensor([]), torch.tensor([]), torch.tensor([]), torch.tensor([])
 	detections = np.stack(detections)
 	num_heads = len(detections)
-	
-	# 2. Detect & track head bboxes 
+
+	# 2. Detect & track head bboxes
 	tracks = tracker.update(detections, image_np)
 	if len(tracks) == 0: # sometimes tracker.update returns [] even when detections is not []
 		return torch.tensor([]), torch.tensor([]), torch.tensor([]), torch.tensor([]), torch.tensor([])
 	pids = (tracks[:, 4] - 1).astype(int)
 	head_bboxes = torch.from_numpy(tracks[:, :4]).float()
 	t_head_bboxes = square_bbox(head_bboxes, img_w, img_h)
-	
+
 	# 3. Extract and transform heads
 	heads = []
 	for bbox in t_head_bboxes:
@@ -247,7 +310,7 @@ def predict_gaze(image, sharingan, head_detector, tracker=None):
 		gaze_vecs = gaze_vecs.squeeze(0).cpu()
 		gaze_points = spatial_argmax2d(gaze_heatmaps, normalize=True)
 		inouts = torch.sigmoid(inouts.squeeze(0)).flatten().cpu()
-  
+
 	return gaze_points, gaze_vecs, inouts, head_bboxes, gaze_heatmaps, pids
 
 def draw_gaze(
@@ -263,7 +326,7 @@ def draw_gaze(
 	colors = COLORS,
 	filter_by_inout = False,
 	alpha: float = 0.5,
-	io_thr: float = 0.5, 
+	io_thr: float = 0.5,
 	gaze_pt_size: int = 10,
 	gaze_vec_factor: float = 0.8,
 	head_center_size: int = 10,
@@ -272,7 +335,7 @@ def draw_gaze(
 ):
 	"""
 	Draws gaze results on the given image.
- 
+
 	Args:
 		image (np.ndarray): The input image on which to draw.
 		head_bboxes (array-like): Bounding boxes for heads.
@@ -297,14 +360,14 @@ def draw_gaze(
 	# Create canvas on which to draw predictions
 	img_h, img_w, img_c = image.shape
 	canvas = image.copy()
-	
+
 	# Scale of the drawing according to image resolution
 	scale = max(img_h, img_w) / 1920
 	fs *= scale
 	thickness = int(scale * thickness)
 	gaze_pt_size = int(scale * gaze_pt_size)
 	head_center_size = int(scale * head_center_size)
-	
+
 	# Draw heatmap
 	if heatmap_pid is not None:
 		if len(gaze_heatmaps) == 0:
@@ -314,7 +377,7 @@ def draw_gaze(
 			gaze_heatmap = gaze_heatmaps[mask]
 			heatmap = TF.resize(gaze_heatmap, (img_h, img_w), antialias=True).squeeze().numpy()
 			heatmap = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min())
-			heatmap = cm.inferno(heatmap) * 255 
+			heatmap = cm.inferno(heatmap) * 255
 			canvas = ((1 - alpha) * image + alpha * heatmap[..., :3]).astype(np.uint8)
 
 			# Write pid being used for the heatmap
@@ -324,80 +387,80 @@ def draw_gaze(
 			br = (img_w, img_h)
 			cv2.rectangle(canvas, ul, br, (0, 0, 0), -1)
 			hm_pid_text_loc = (img_w - w_text - 10, img_h - 10)
-			cv2.putText(canvas, hm_pid_text, hm_pid_text_loc, cv2.FONT_HERSHEY_SIMPLEX, fs, (255, 255, 255), 1, cv2.LINE_AA)   
+			cv2.putText(canvas, hm_pid_text, hm_pid_text_loc, cv2.FONT_HERSHEY_SIMPLEX, fs, (255, 255, 255), 1, cv2.LINE_AA)
 
-	# Draw head bboxes  
+	# Draw head bboxes
 	if len(head_bboxes) > 0:
 		if len(pids) == 0:
 			raise ValueError("pids must be provided if head_bboxes is provided.")
-			
+
 		# Convert to numpy
 		head_bboxes = head_bboxes.numpy() if isinstance(head_bboxes, torch.Tensor) else np.array(head_bboxes)
 		inouts = inouts.numpy() if isinstance(inouts, torch.Tensor) else np.array(inouts)
 		if head_bboxes.max() <= 1.0:
 			head_bboxes = head_bboxes * np.array([img_w, img_h, img_w, img_h])
 		head_bboxes = head_bboxes.astype(int)
-		
+
 		# Compute head center
 		head_centers = np.hstack([(head_bboxes[:,[0]] + head_bboxes[:,[2]]) / 2, (head_bboxes[:,[1]] + head_bboxes[:,[3]]) / 2])
 		head_centers = head_centers.astype(int)
-		
+
 		gaze_available = (len(gaze_points) > 0)
 		if gaze_available and (len(inouts) == 0):
 			raise ValueError("inouts must be provided if gaze_pts is provided.")
-			
+
 		if gaze_available:
 			gaze_points = gaze_points.numpy() if isinstance(gaze_points, torch.Tensor) else np.array(gaze_points)
 			if (gaze_points.max() <= 1.):
 				gaze_points = gaze_points * np.array([img_w, img_h])
 			gaze_points = gaze_points.astype(int)
-			
+
 		if gaze_vecs is not None:
 			gaze_vecs = gaze_vecs.numpy() if isinstance(gaze_vecs, torch.Tensor) else np.array(gaze_vecs)
-		
+
 		for i, head_bbox in enumerate(head_bboxes):
 			pid = pids[i]
 			if (heatmap_pid is not None) and (heatmap_pid != pid):
 				continue
-			
+
 			xmin, ymin, xmax, ymax = head_bbox
 			head_radius = max(xmax-xmin, ymax-ymin) // 2
 			color = colors[pid % len(colors)]
-							
+
 			# Compute Head Center
 			head_center = head_centers[i]
-		
+
 			head_bbox_ul = (xmin, ymin)
 			head_bbox_br = (xmax, ymax)
 			head_center_ul = head_center - (head_center_size // 2)
 			head_center_br = head_center + (head_center_size // 2)
 			cv2.rectangle(canvas, head_center_ul, head_center_br, color, -1) # head center point
 			cv2.circle(canvas, head_center, head_radius, color, thickness) # head circle
-			
+
 			# Draw header
 			io = inouts[i] if inouts is not None else "-"
 			header_text = f"P{pid}: {io:.2f}"
 			(w_text, h_text), _ = cv2.getTextSize(header_text, cv2.FONT_HERSHEY_SIMPLEX, fs, 1)
-			
+
 			header_ul =  (int(head_center[0] - w_text / 2), int(ymin - thickness / 2))
 			header_br = (int(head_center[0] + w_text / 2), int(ymin + h_text + 5))
 			cv2.rectangle(canvas, header_ul, header_br, color, -1) # header bbox
 			cv2.putText(canvas, header_text, (header_ul[0], int(ymin + h_text)), cv2.FONT_HERSHEY_SIMPLEX, fs, (255, 255, 255), 1, cv2.LINE_AA) # header text
-			
+
 			if gaze_available and (io > io_thr or not filter_by_inout):
 				gp = gaze_points[i]
 				vec = (gp - head_center)
 				vec = vec / (np.linalg.norm(vec) + 0.000001)
 				intersection = head_center + (vec * head_radius).astype(int)
 				cv2.line(canvas, intersection, gp, color, thickness)
-				
+
 				cv2.circle(canvas, gp, gaze_pt_size, color, -1)
-				
+
 			if gaze_vecs is not None:
 				gv = gaze_vecs[i]
 				cv2.arrowedLine(canvas, head_center, (head_center + gaze_vec_factor * head_radius * gv).astype(int), color, thickness)
-				
-				
+
+
 	# Write frame number
 	if frame_nb is not None:
 		frame_nb = str(frame_nb)
@@ -406,7 +469,7 @@ def draw_gaze(
 		nb_br = (int((img_w + w_text) / 2), img_h)
 		cv2.rectangle(canvas, nb_ul, nb_br, (0, 0, 0), -1)
 		nb_text_loc = (int((img_w - w_text) / 2), (img_h - 10))
-		cv2.putText(canvas, frame_nb, nb_text_loc, cv2.FONT_HERSHEY_SIMPLEX, fs, (255, 255, 255), 1, cv2.LINE_AA) 
+		cv2.putText(canvas, frame_nb, nb_text_loc, cv2.FONT_HERSHEY_SIMPLEX, fs, (255, 255, 255), 1, cv2.LINE_AA)
 
 	return canvas
 
@@ -414,11 +477,12 @@ def draw_gaze(
 def main():
 
 	start = dt.datetime.now()
-	
+
 	# Path magic
 	video_file = os.path.join(args.input_dir, args.input_filename)
 	basename, ext = os.path.splitext(args.input_filename)
-	
+	csv_file = os.path.join(args.output_dir, f"{basename}-gaze.csv")
+
 	if args.heatmap_pid >= 0:
 		output_file = os.path.join(args.output_dir, f"{basename}-pid{args.heatmap_pid}-pred{ext}")
 	else:
@@ -437,89 +501,122 @@ def main():
 	img_h, img_w, _ = frame.shape  # retrieve video height and width
 	fps = int(round(cap.get(cv2.CAP_PROP_FPS)))
 	frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-	
-	# Initialize ffmpeg writer
-	ffmpeg_bin = get_ffmpeg_path()
-	command = [
-		ffmpeg_bin,
-		"-loglevel", "error",
-		"-y",
-		"-s", f"{img_w}x{img_h}",
-		"-pixel_format", "rgb24",
-		"-f", "rawvideo",
-		"-r", str(fps),
-		"-i", "pipe:",
-		"-vcodec", "libx264",
-		"-pix_fmt", "yuv420p",
-		"-crf", "24",
-		output_file,
-	]
-	process = sp.Popen(command, stdin=sp.PIPE)
-	
+
+	# Initialize ffmpeg writer (only when --write-video is set)
+	process = None
+	if args.write_video:
+		ffmpeg_bin = get_ffmpeg_path()
+		command = [
+			ffmpeg_bin,
+			"-loglevel", "error",
+			"-y",
+			"-s", f"{img_w}x{img_h}",
+			"-pixel_format", "rgb24",
+			"-f", "rawvideo",
+			"-r", str(fps),
+			"-i", "pipe:",
+			"-vcodec", "libx264",
+			"-pix_fmt", "yuv420p",
+			"-crf", "24",
+			output_file,
+		]
+		process = sp.Popen(command, stdin=sp.PIPE)
+
+	# Open CSV for gaze-target output
+	os.makedirs(args.output_dir, exist_ok=True)
+	csv_fields = ["frame", "timestamp_sec", "looker_pid", "target_pid", "inout",
+				  "gaze_in_bbox", "gaze_x", "gaze_y",
+				  "head_xmin", "head_ymin", "head_xmax", "head_ymax"]
+	csv_fh = open(csv_file, "w", newline="")
+	csv_writer = csv.DictWriter(csv_fh, fieldnames=csv_fields)
+	csv_writer.writeheader()
+
+	seen_pids = set()
+	triad_warned = False
+
 	# Iterate over frames and process
 	frame_nb = 0
 	with tqdm(total=frame_count) as pbar:
 		while ret:
 			frame_nb += 1
-			
+			timestamp_sec = round(frame_nb / fps, 4)
+
 			# =============== Predict =============== #
 			frame_np = frame[..., ::-1] # BGR >> RGB
-			frame = Image.fromarray(frame_np)
-			output = predict_gaze(frame, sharingan, head_detector, tracker=tracker)
+			frame_pil = Image.fromarray(frame_np)
+			output = predict_gaze(frame_pil, sharingan, head_detector, tracker=tracker)
 			gaze_points, gaze_vecs, inouts, head_bboxes, gaze_heatmaps, pids = output
 
-			# =============== Draw Prediction =============== #
-			heatmap_pid = args.heatmap_pid if args.heatmap_pid >= 0 else None
 			num_people = len(head_bboxes)
 			pids = np.arange(num_people) if len(pids) == 0 else pids
-			frame = draw_gaze(frame_np, 
-							head_bboxes = head_bboxes, 
-							gaze_points = gaze_points, 
-							gaze_vecs = gaze_vecs if args.show_gaze_vec else None, 
-							inouts = inouts, 
-							pids = pids, 
-							gaze_heatmaps = gaze_heatmaps, 
-							heatmap_pid = heatmap_pid, 
-							frame_nb = None, 
-							colors = COLORS,
-							filter_by_inout = args.filter_by_inout,
-							alpha = 0.6, 
-							gaze_pt_size = 20,
-							gaze_vec_factor = 0.6,
-							head_center_size = 18,
-							thickness = 10,
-							fs = 0.8,
-							) 
 
+			# =============== Triad check =============== #
+			frame_pids = set(int(p) for p in pids)
+			seen_pids.update(frame_pids)
+			if len(frame_pids) != 3 and not triad_warned:
+				print(colored(f"WARNING: frame {frame_nb} has {len(frame_pids)} person(s) "
+							  f"(expected 3). PIDs: {frame_pids}", "red"))
+				triad_warned = True
 
-			#frame = draw_gaze(frame, 
-			#        		head_bboxes = head_bboxes, gaze_heatmaps = gaze_heatmaps, heatmap_pid = heatmap_pid, 
-			#				  gaze_points = gaze_points, gaze_vecs = gaze_vecs[:, :2], inouts = inouts, pids = pids, 
-			#				  frame_nb = frame_nb, alpha = 0.6, fs = 0.8)
+			# =============== CSV rows =============== #
+			gaze_rows = resolve_gaze_targets(
+				pids, head_bboxes, gaze_points, inouts, img_w, img_h,
+				io_thr=args.io_thr)
+			for row in gaze_rows:
+				row["frame"] = frame_nb
+				row["timestamp_sec"] = timestamp_sec
+				csv_writer.writerow(row)
 
-			# ================= Write Frame ================= #
-			process.stdin.write(frame.tobytes())
+			# =============== Draw Prediction (optional) =============== #
+			if args.write_video:
+				heatmap_pid = args.heatmap_pid if args.heatmap_pid >= 0 else None
+				frame_draw = draw_gaze(frame_np,
+								head_bboxes = head_bboxes,
+								gaze_points = gaze_points,
+								gaze_vecs = gaze_vecs if args.show_gaze_vec else None,
+								inouts = inouts,
+								pids = pids,
+								gaze_heatmaps = gaze_heatmaps,
+								heatmap_pid = heatmap_pid,
+								frame_nb = None,
+								colors = COLORS,
+								filter_by_inout = args.filter_by_inout,
+								alpha = 0.6,
+								gaze_pt_size = 20,
+								gaze_vec_factor = 0.6,
+								head_center_size = 18,
+								thickness = 10,
+								fs = 0.8,
+								)
+				process.stdin.write(frame_draw.tobytes())
 
 			# =============== Read Next Frame =============== #
 			ret, frame = cap.read()
 
 			pbar.update(1)
-	
+
 	# Release Capture Device
 	cap.release()
-	
-	# Close and flush stdin
-	process.stdin.close()
-	
-	# Wait for sub-process to finish
-	process.wait()
-	
-	# Terminate the sub-process
-	process.terminate()
-	
+
+	# Close CSV
+	csv_fh.close()
+	print(colored(f"CSV saved to {csv_file}", TERM_COLOR))
+
+	# Triad summary warning
+	if len(seen_pids) != 3:
+		print(colored(f"WARNING: expected 3 unique participants across the video, "
+					  f"but found {len(seen_pids)}: {seen_pids}", "red"))
+
+	# Close ffmpeg
+	if process is not None:
+		process.stdin.close()
+		process.wait()
+		process.terminate()
+		print(colored(f"Video saved to {output_file}", TERM_COLOR))
+
 	end = dt.datetime.now()
 	print(colored(f"Finished. The script took {end - start}.", TERM_COLOR))
-		
+
 
 if __name__ == "__main__":
 	main()
