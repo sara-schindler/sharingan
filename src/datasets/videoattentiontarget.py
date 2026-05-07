@@ -85,9 +85,9 @@ TEST_SHOWS = [
 	"West_World",
 ]
 
-IMG_MEAN = [0.44232, 0.40506, 0.36457] 
+IMG_MEAN = [0.44232, 0.40506, 0.36457]
 IMG_STD = [0.28674, 0.27776, 0.27995]
-				
+
 # ============================================================================= #
 #                          VIDEOATTENTIONTARGET DATASET                         #
 # ============================================================================= #
@@ -123,7 +123,7 @@ class VideoAttentionTargetDataset(Dataset):
 		self.head_thr = head_thr
 		self.return_head_mask = return_head_mask
 		self.annotations = self.load_annotations()
-  
+
 	def load_annotations(self):
 		annotation_files = glob(os.path.join(self.root, f"annotations/*/*/*/*.txt"))
 
@@ -161,20 +161,20 @@ class VideoAttentionTargetDataset(Dataset):
 		item = self.annotations.iloc[index]
 		show, clip, img_name = item["path"].split("/")
 		basename, ext = os.path.splitext(img_name)
-		
+
 		# Load Image
 		path = item["path"]
 		frame_path = os.path.join(self.root, "images", path)
 		image = Image.open(frame_path).convert("RGB")
 		img_w, img_h = image.size
-		
+
 		# Load pid, inout and gaze point
 		pid = item["id"]
 		inout = torch.tensor(item["inout"], dtype=torch.float)
 		gaze_pt = torch.tensor([item["gaze_x"], item["gaze_y"]], dtype=torch.float)
 		if inout == 1.:
 			gaze_pt /= torch.tensor([img_w, img_h], dtype=torch.float)
-		
+
 		# Load head bboxes
 		## For target person
 		target_head_bbox = item[["bbox_x_min", "bbox_y_min", "bbox_x_max", "bbox_y_max"]]
@@ -182,10 +182,10 @@ class VideoAttentionTargetDataset(Dataset):
 		target_head_bbox = expand_bbox(target_head_bbox, img_w, img_h, k=0.05)
 		target_head_center =  torch.stack([target_head_bbox[0, [0, 2]].mean(), target_head_bbox[0, [1, 3]].mean()])
 		target_head_center /= torch.tensor([img_w, img_h], dtype=torch.float)
-		
+
 		## For context people (ie. detected w/ Yolo)
 		context_head_bboxes = torch.zeros((0, 4))
-		if (self.num_people == -1) or (self.num_people > 1):            
+		if (self.num_people == -1) or (self.num_people > 1):
 			det_file = f"{show}/{clip}/{basename}-head-detections.npy"
 			detections = np.load(os.path.join(self.root_heads, det_file))
 
@@ -204,7 +204,7 @@ class VideoAttentionTargetDataset(Dataset):
 			num_context_heads = len(context_head_bboxes)
 			num_keep = num_context_heads if self.num_people == -1 else self.num_people - 1
 			context_head_bboxes = context_head_bboxes[:num_keep]
-			
+
 		# Concatenate main head bbox with others and apply jitter
 		head_bboxes = torch.concat([context_head_bboxes, target_head_bbox], dim=0).to(torch.float)
 		if self.split == "train":
@@ -212,7 +212,7 @@ class VideoAttentionTargetDataset(Dataset):
 
 		# Square head bboxes (can have negative values)
 		head_bboxes = square_bbox(head_bboxes, img_w, img_h)
-		
+
 		# Extract Heads (negative values add padding)
 		heads = []
 		for head_bbox in head_bboxes:
@@ -233,11 +233,11 @@ class VideoAttentionTargetDataset(Dataset):
 			"img_size": torch.tensor((img_w, img_h), dtype=torch.long),
 			"path": path,
 		}
-		
+
 		# Transform
 		if self.transform:
 			sample = self.transform(sample)
-			
+
 		# Pad missing people (ie. heads + bboxes)
 		num_heads = len(head_bboxes)
 		num_missing_heads = self.num_people - num_heads if self.num_people != -1 else 0
@@ -249,7 +249,7 @@ class VideoAttentionTargetDataset(Dataset):
 				sample["heads"] = F.pad(sample["heads"], pad, mode="constant", value=0.)
 			else:
 				sample["heads"] = [Image.fromarray(np.zeros((224, 224, 3), dtype=np.uint8))] * num_missing_heads + heads
-		
+
 		# Compute head centers
 		sample["head_centers"] = torch.hstack(
 			[
@@ -257,19 +257,19 @@ class VideoAttentionTargetDataset(Dataset):
 				(sample["head_bboxes"][:, [1]] + sample["head_bboxes"][:, [3]]) / 2,
 			]
 		)
-		
+
 		# Generate gaze heatmap
 		if sample["inout"] == 1.:
-			sample["gaze_heatmap"] = generate_gaze_heatmap(sample["gaze_pt"], sigma=self.heatmap_sigma, size=self.heatmap_size)    
+			sample["gaze_heatmap"] = generate_gaze_heatmap(sample["gaze_pt"], sigma=self.heatmap_sigma, size=self.heatmap_size)
 		else:
 			sample["gaze_heatmap"] = torch.zeros((self.heatmap_size, self.heatmap_size), dtype=torch.float)
-		
+
 		# Compute gaze vec (only for target person)
 		new_img_w, new_img_h = get_img_size(sample["image"])
 		gaze_vec = sample["gaze_pt"] - sample["head_centers"][-1]
 		gaze_vec = gaze_vec * torch.tensor([new_img_w, new_img_h])
 		sample["gaze_vec"] = F.normalize(gaze_vec, p=2, dim=-1)
-		
+
 		# Generate head mask
 		if self.return_head_mask:
 			sample["head_masks"] = generate_mask(sample["head_bboxes"], new_img_w, new_img_h)
@@ -296,8 +296,8 @@ class VideoAttentionTargetDataModule(pl.LightningDataModule):
 		head_thr: float = 0.5,
 		return_head_mask: bool = False,
 		batch_size: Union[int, dict] = 32,
-	):  
-		
+	):
+
 		super().__init__()
 		self.root = root
 		self.root_heads = root_heads
@@ -336,7 +336,7 @@ class VideoAttentionTargetDataModule(pl.LightningDataModule):
 				stride=self.stride,
 				transform=train_transform,
 				tr=(-0.1, 0.1),
-				heatmap_size=self.heatmap_size, 
+				heatmap_size=self.heatmap_size,
 				heatmap_sigma=self.heatmap_sigma,
 				num_people=self.num_people,
 				head_thr=self.head_thr,
@@ -350,14 +350,14 @@ class VideoAttentionTargetDataModule(pl.LightningDataModule):
 					Normalize(img_mean=IMG_MEAN, img_std=IMG_STD),
 				]
 			)
-			self.val_dataset = VideoAttentionTargetDataset(                
+			self.val_dataset = VideoAttentionTargetDataset(
 				root=self.root,
 				root_heads=self.root_heads,
 				split="val",
 				stride=1,
 				transform=val_transform,
 				tr=(0.0, 0.0),
-				heatmap_size=self.heatmap_size, 
+				heatmap_size=self.heatmap_size,
 				heatmap_sigma=self.heatmap_sigma,
 				num_people=5, # 5 is an arbitrary high number. TODO: test with all people in the image
 				head_thr=self.head_thr,
@@ -379,7 +379,7 @@ class VideoAttentionTargetDataModule(pl.LightningDataModule):
 				stride=1,
 				transform=val_transform,
 				tr=(0.0, 0.0),
-				heatmap_size=self.heatmap_size, 
+				heatmap_size=self.heatmap_size,
 				heatmap_sigma=self.heatmap_sigma,
 				num_people=-1, # always validate with all people in the image
 				head_thr=self.head_thr,
@@ -401,7 +401,7 @@ class VideoAttentionTargetDataModule(pl.LightningDataModule):
 				stride=1,
 				transform=test_transform,
 				tr=(0.0, 0.0),
-				heatmap_size=self.heatmap_size, 
+				heatmap_size=self.heatmap_size,
 				heatmap_sigma=self.heatmap_sigma,
 				num_people=-1, # always test with all people in the image
 				head_thr=self.head_thr,

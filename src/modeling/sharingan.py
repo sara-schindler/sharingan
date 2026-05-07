@@ -95,9 +95,9 @@ class SharinganModule(pl.LightningModule):
         )
 
         # Define Loss Function
-        self.compute_loss = partial(compute_sharingan_loss, 
-                                    w_hm=cfg.loss.weight_heatmap, 
-                                    w_ang=cfg.loss.weight_angular, 
+        self.compute_loss = partial(compute_sharingan_loss,
+                                    w_hm=cfg.loss.weight_heatmap,
+                                    w_ang=cfg.loss.weight_angular,
                                     w_bce=cfg.loss.weight_bce)
 
         # Initialize Weights
@@ -234,8 +234,8 @@ class SharinganModule(pl.LightningModule):
     def configure_optimizers(self):
         if self.dataset == "gazefollow":  # train all params
             # Optimizer
-            optimizer = optim.AdamW(self.parameters(), 
-                                    lr=self.cfg.optimizer.lr.base, 
+            optimizer = optim.AdamW(self.parameters(),
+                                    lr=self.cfg.optimizer.lr.base,
                                     weight_decay=self.cfg.optimizer.weight_decay)
         else:  # train non frozen params with module-specific learning rates
             param_groups = [
@@ -265,8 +265,8 @@ class SharinganModule(pl.LightningModule):
                     "lr": self.cfg.optimizer.lr.inout_decoder,
                 },
             ]
-            optimizer = optim.AdamW(param_groups, 
-                                    lr=self.cfg.optimizer.lr.base, 
+            optimizer = optim.AdamW(param_groups,
+                                    lr=self.cfg.optimizer.lr.base,
                                     weight_decay=self.cfg.optimizer.weight_decay)
 
         # Scheduler: Cosine Annealing with Warmup or None
@@ -328,7 +328,7 @@ class SharinganModule(pl.LightningModule):
         gaze_pt_pred = spatial_argmax2d(gaze_heatmap_pred, normalize=True)  # (b, 2)
 
         # Compute loss
-        loss, logs = self.compute_loss(batch["gaze_vec"], batch["gaze_heatmap"], batch["inout"], 
+        loss, logs = self.compute_loss(batch["gaze_vec"], batch["gaze_heatmap"], batch["inout"],
                                        gaze_vec_pred, gaze_heatmap_pred, inout_pred)
 
         # Logging losses
@@ -352,7 +352,7 @@ class SharinganModule(pl.LightningModule):
         gaze_pt_pred = spatial_argmax2d(gaze_heatmap_pred, normalize=True)  # (b, 2)
 
         # Compute loss
-        loss, logs = self.compute_loss(batch["gaze_vec"], batch["gaze_heatmap"], batch["inout"], 
+        loss, logs = self.compute_loss(batch["gaze_vec"], batch["gaze_heatmap"], batch["inout"],
                                        gaze_vec_pred, gaze_heatmap_pred, inout_pred)
 
         # Update metrics
@@ -503,7 +503,7 @@ class Sharingan(nn.Module):
         self.decoder_use_bn = decoder_use_bn
 
         self.gaze_encoder = GazeEncoder(
-            token_dim=token_dim, 
+            token_dim=token_dim,
             feature_dim=gaze_feature_dim
         )
 

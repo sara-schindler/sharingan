@@ -48,4 +48,3 @@ def save_code_snapshot(code_folder, output_folder="."):
     output_basename = os.path.join(output_folder, "src")
     shutil.make_archive(output_basename, "zip", code_folder)
     print(colored("Done.", TERM_COLOR))
-    

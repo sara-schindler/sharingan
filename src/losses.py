@@ -15,11 +15,11 @@ import torch.nn.functional as F
 def compute_sharingan_loss(gaze_vec_gt, gaze_heatmap_gt, inout_gt, gaze_vec_pred, gaze_heatmap_pred, inout_pred, w_hm=1000, w_ang=3, w_bce=0):
     heatmap_loss = torch.tensor(0.0)
     angular_loss = torch.tensor(0.0)
-        
+
     if torch.sum(inout_gt) > 0:  # to avoid case where all samples of the batch are outside (i.e. division by 0)
         heatmap_loss = compute_heatmap_loss(gaze_heatmap_pred, gaze_heatmap_gt, inout_gt)
         angular_loss = compute_angular_loss(gaze_vec_pred, gaze_vec_gt, inout_gt)
-        
+
     bce_loss = compute_bce_loss(inout_pred, inout_gt, use_focal_loss=False)
     total_loss = w_hm * heatmap_loss + w_ang * angular_loss + w_bce * bce_loss
 

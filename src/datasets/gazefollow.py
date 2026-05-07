@@ -76,7 +76,7 @@ class GazeFollowDataset(Dataset):
     def load_annotations(self) -> pd.DataFrame:
         annotations = pd.DataFrame()
         if self.split == "test":
-            column_names = ["path", "id", "body_bbox_x", "body_bbox_y", "body_bbox_w", "body_bbox_h", "eye_x", "eye_y", 
+            column_names = ["path", "id", "body_bbox_x", "body_bbox_y", "body_bbox_w", "body_bbox_h", "eye_x", "eye_y",
                             "gaze_x", "gaze_y", "bbox_x_min", "bbox_y_min", "bbox_x_max", "bbox_y_max", "origin", "meta"]
             annotations = pd.read_csv(
                 os.path.join(self.root, "test_annotations_release.txt"),
@@ -92,7 +92,7 @@ class GazeFollowDataset(Dataset):
             self.length = len(self.image_paths)
 
         elif self.split in ["train", "val"]:
-            column_names = ["path", "id", "body_bbox_x", "body_bbox_y", "body_bbox_w", "body_bbox_h", "eye_x", "eye_y", 
+            column_names = ["path", "id", "body_bbox_x", "body_bbox_y", "body_bbox_w", "body_bbox_h", "eye_x", "eye_y",
                             "gaze_x", "gaze_y", "bbox_x_min", "bbox_y_min", "bbox_x_max", "bbox_y_max", "inout", "origin", "meta"]
             annotations = pd.read_csv(
                 os.path.join(self.root_annotations, f"{self.split}_annotations_new.txt"), # reprocessed train/val head bboxes
@@ -139,7 +139,7 @@ class GazeFollowDataset(Dataset):
         # Load image
         image = Image.open(os.path.join(self.root, item["path"])).convert("RGB")
         img_w, img_h = image.size
-        
+
         # Load head bboxes
         ## For target person
         target_head_bbox = item[["bbox_x_min", "bbox_y_min", "bbox_x_max", "bbox_y_max"]]
@@ -186,7 +186,7 @@ class GazeFollowDataset(Dataset):
         # Normalize Head Bboxes and clip to [0, 1]
         head_bboxes /= torch.tensor([img_w, img_h, img_w, img_h], dtype=torch.float)
         head_bboxes = torch.clamp(head_bboxes, min=0.0, max=1.0)
-        
+
         # Build Sample
         sample = {
             "image": image,
@@ -202,7 +202,7 @@ class GazeFollowDataset(Dataset):
         # Transform
         if self.transform:
             sample = self.transform(sample)
-            
+
         # Pad missing people (ie. heads + bboxes)
         num_heads = len(head_bboxes)
         num_missing_heads = self.num_people - num_heads if self.num_people != -1 else 0
@@ -223,19 +223,19 @@ class GazeFollowDataset(Dataset):
                 (sample["head_bboxes"][:, [1]] + sample["head_bboxes"][:, [3]]) / 2,
             ]
         )
-        
+
         # Generate gaze heatmap
         if sample["inout"] == 1.0:
-            sample["gaze_heatmap"] = generate_gaze_heatmap(sample["gaze_pt"], sigma=self.heatmap_sigma, size=self.heatmap_size)    
+            sample["gaze_heatmap"] = generate_gaze_heatmap(sample["gaze_pt"], sigma=self.heatmap_sigma, size=self.heatmap_size)
         else:
             sample["gaze_heatmap"] = torch.zeros((self.heatmap_size, self.heatmap_size), dtype=torch.float)
-        
+
         # Compute gaze vector (only for target person)
         new_img_w, new_img_h = get_img_size(sample["image"])
         gaze_vec = sample["gaze_pt"] - sample["head_centers"][-1]
         gaze_vec = gaze_vec * torch.tensor([new_img_w, new_img_h])
         sample["gaze_vec"] = F.normalize(gaze_vec, p=2, dim=-1)
-        
+
         # Generate head mask
         if self.return_head_mask:
             sample["head_masks"] = generate_mask(sample["head_bboxes"], new_img_w, new_img_h)
@@ -272,7 +272,7 @@ class GazeFollowDataModule(pl.LightningDataModule):
         self.num_people = num_people
         self.batch_size = {stage: batch_size for stage in ["train", "val", "test"]} if isinstance(batch_size, int) else batch_size
         self.return_head_mask = return_head_mask
-        
+
     def setup(self, stage: str):
         if stage == "fit":
             train_transform = Compose(

@@ -32,7 +32,8 @@ import torchvision.transforms.functional as TF
 from src.modeling.sharingan import Sharingan
 from src.utils.common import spatial_argmax2d, square_bbox
 
-from boxmot import DeepOCSORT, BYTETracker, OCSORT
+from boxmot import DeepOcSort as DeepOCSORT, ByteTrack as BYTETracker, OcSort as OCSORT
+
 
 
 
@@ -166,6 +167,29 @@ def load_tracker():
 	tracker = OCSORT()
 	return tracker
 
+
+def patch_yolov5_autocast(model):
+	"""Switch YOLOv5 AutoShape to torch.amp.autocast(device_type='cuda', ...)."""
+	if not hasattr(torch, "amp") or not hasattr(torch.amp, "autocast"):
+		return
+
+	try:
+		module = importlib.import_module(model.__class__.__module__)
+		amp_module = getattr(module, "amp", None)
+		if amp_module is None:
+			return
+
+		def autocast_cuda(enabled=True, *args, **kwargs):
+			kwargs = dict(kwargs)
+			kwargs.setdefault("enabled", enabled)
+			return torch.amp.autocast("cuda", *args, **kwargs)
+
+		autocast_cuda.__name__ = "autocast_cuda"
+		amp_module.autocast = autocast_cuda
+	except Exception:
+		# Keep demo robust even if the internal YOLOv5 module layout changes.
+		return
+
 def load_head_detection_model(device):
 	# Load and return the pre-trained head detection model
 	ckpt_path = "./weights/yolov5m_crowdhuman.pt"
@@ -174,6 +198,7 @@ def load_head_detection_model(device):
 	else:
 		device_str = str(device)
 	model = torch.hub.load("ultralytics/yolov5", "custom", path=ckpt_path, verbose=False, device=device_str)
+	patch_yolov5_autocast(model)
 	model.conf = 0.25  # NMS confidence threshold
 	model.iou = 0.45  # NMS IoU threshold
 	model.classes = [1]  # filter by class, i.e. = [1] for heads
