@@ -8,6 +8,8 @@
 data/childplay-head.zip
 data/gazefollow-head.zip
 data/videoattentiontarget-head.zip
+data/
+data/*
 weights/*
 !weights/
 checkpoints/*
